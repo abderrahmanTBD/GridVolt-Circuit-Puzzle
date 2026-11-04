@@ -91,9 +91,24 @@ tolerance, so they match on Windows, macOS and Linux CI.
 
 ```bash
 dart run tool/generate_sounds.dart   # synthesise the WAV sound effects
-flutter test tool/readme_media       # render the README screenshots and GIF
+flutter test tool/readme_media       # README + Play Store screenshots and GIF
+flutter test tool/branding           # app icon, splash and store graphics
 ```
 
 Sound effects are generated procedurally, so the repo ships no third-party
 audio. The README media is rendered from the real widgets with real fonts, so
 it stays in sync with the UI.
+
+## Releasing
+
+```bash
+flutter build appbundle --release --dart-define=SENTRY_DSN=<your-dsn>
+```
+
+Release builds are signed with the upload key from `android/key.properties`
+(git-ignored; without it they fall back to debug signing), shrunk with R8 and
+about 19 MB per device. Crash reporting via Sentry is off unless a DSN is
+passed. Store assets are in [`docs/store/`](docs/store/) and the full Play
+Console checklist is in [`docs/PUBLISHING.md`](docs/PUBLISHING.md).
+
+[Privacy policy](docs/privacy-policy.md)

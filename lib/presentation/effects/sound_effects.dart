@@ -21,6 +21,33 @@ class SilentSoundEffects implements SoundEffects {
   Future<void> dispose() async {}
 }
 
+/// Lets the game start immediately while sounds load in the background.
+/// Effects requested before loading finishes are skipped (only the first
+/// moments after launch are affected).
+class DeferredSoundEffects implements SoundEffects {
+  DeferredSoundEffects(Future<SoundEffects> loading) {
+    loading.then((s) {
+      if (_disposed) {
+        s.dispose();
+      } else {
+        _inner = s;
+      }
+    });
+  }
+
+  SoundEffects? _inner;
+  bool _disposed = false;
+
+  @override
+  void play(Sfx sfx) => _inner?.play(sfx);
+
+  @override
+  Future<void> dispose() async {
+    _disposed = true;
+    await _inner?.dispose();
+  }
+}
+
 /// Low-latency playback of the bundled WAVs (see `tool/generate_sounds.dart`).
 /// Mixes with the user's music instead of pausing it, and respects the iOS
 /// silent switch.
@@ -65,10 +92,11 @@ class AudioPlayersSoundEffects implements SoundEffects {
       );
       final players = <Sfx, List<AudioPlayer>>{};
       for (final MapEntry(key: sfx, value: path) in _assets.entries) {
-        players[sfx] = [
+        // Load all voices in parallel; sequential loading delayed startup.
+        players[sfx] = await Future.wait([
           for (var i = 0; i < _voices(sfx); i++)
-            await _preload(path, _volume[sfx]!, created),
-        ];
+            _preload(path, _volume[sfx]!, created),
+        ]);
       }
       return AudioPlayersSoundEffects._(players);
     } catch (error) {

@@ -7,10 +7,10 @@
 import 'dart:io';
 import 'dart:math';
 import 'dart:ui' as ui;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:grid_volt/app.dart';
 import 'package:grid_volt/application/game/game_bloc.dart';
@@ -24,11 +24,12 @@ import 'package:hydrated_bloc/hydrated_bloc.dart';
 import 'package:image/image.dart' as img;
 import 'package:mocktail/mocktail.dart';
 
+import '../test_fonts.dart';
+
 class _MockStorage extends Mock implements Storage {}
 
 const _screen = Size(390, 844);
 const _rootKey = Key('media-root');
-final _outDir = Directory('docs/media');
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -138,23 +139,6 @@ const _square = PuzzleShape(
 // ---------------------------------------------------------------------------
 // Harness
 
-Future<void> _loadFonts() async {
-  // flutter_tester lives in <flutter>/bin/cache/artifacts/engine/<platform>/.
-  final artifacts = File(Platform.resolvedExecutable).parent.parent.parent;
-  final fonts = Directory('${artifacts.path}/material_fonts');
-  Future<ByteData> read(String name) async =>
-      ByteData.sublistView(await File('${fonts.path}/$name').readAsBytes());
-
-  final roboto = FontLoader('Roboto');
-  for (final w in ['regular', 'medium', 'bold', 'black']) {
-    roboto.addFont(read('roboto-$w.ttf'));
-  }
-  await roboto.load();
-  await (FontLoader(
-    'MaterialIcons',
-  )..addFont(read('materialicons-regular.otf'))).load();
-}
-
 Future<GameBloc> _pumpApp(
   WidgetTester tester, {
   required GameState? saved,
@@ -176,7 +160,7 @@ Future<GameBloc> _pumpApp(
   }
   HydratedBloc.storage = storage;
 
-  tester.view.physicalSize = _screen;
+  tester.view.physicalSize = _profile.screen;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
 
@@ -206,16 +190,55 @@ Future<ui.Image> _capture(WidgetTester tester, double pixelRatio) async {
   ))!;
 }
 
+/// Where and how a set of screenshots is rendered.
+class _Profile {
+  const _Profile(this.dir, this.screen, this.pixelRatio, {this.opaque = false});
+
+  final String dir;
+  final Size screen;
+  final double pixelRatio;
+
+  /// Play Store screenshots must be 24-bit (no alpha channel).
+  final bool opaque;
+}
+
+/// README: a modern 19.5:9 phone.
+const _readme = _Profile('docs/media', _screen, 2);
+
+/// Google Play: 9:16 at 1080×1920 (Play rejects sides more than 2:1).
+const _store = _Profile(
+  'docs/store/screenshots',
+  Size(360, 640),
+  3,
+  opaque: true,
+);
+
+_Profile _profile = _readme;
+
 Future<void> _savePng(WidgetTester tester, String name) async {
-  final image = await _capture(tester, 2);
-  final bytes = await tester.runAsync(
-    () => image.toByteData(format: ui.ImageByteFormat.png),
-  );
+  final p = _profile;
+  final image = await _capture(tester, p.pixelRatio);
+  final Uint8List png;
+  if (p.opaque) {
+    final raw = await tester.runAsync(
+      () => image.toByteData(format: ui.ImageByteFormat.rawRgba),
+    );
+    final rgba = img.Image.fromBytes(
+      width: image.width,
+      height: image.height,
+      bytes: raw!.buffer,
+      numChannels: 4,
+    );
+    png = img.encodePng(rgba.convert(numChannels: 3));
+  } else {
+    final bytes = await tester.runAsync(
+      () => image.toByteData(format: ui.ImageByteFormat.png),
+    );
+    png = bytes!.buffer.asUint8List();
+  }
   image.dispose();
-  _outDir.createSync(recursive: true);
-  File(
-    '${_outDir.path}/$name.png',
-  ).writeAsBytesSync(bytes!.buffer.asUint8List());
+  Directory(p.dir).createSync(recursive: true);
+  File('${p.dir}/$name.png').writeAsBytesSync(png);
 }
 
 /// Records frames for the GIF at a reduced scale.
@@ -248,7 +271,7 @@ class _GifRecorder {
     for (final (frame, duration) in frames) {
       encoder.addFrame(frame, duration: duration);
     }
-    File('${_outDir.path}/$name.gif').writeAsBytesSync(encoder.finish()!);
+    File('${_readme.dir}/$name.gif').writeAsBytesSync(encoder.finish()!);
   }
 }
 
@@ -256,21 +279,29 @@ class _GifRecorder {
 // Scenes
 
 void main() {
-  setUpAll(_loadFonts);
+  setUpAll(loadRealFonts);
+  for (final profile in [_readme, _store]) {
+    group(profile.dir, () {
+      setUp(() => _profile = profile);
+      _scenes(recordGif: identical(profile, _readme));
+    });
+  }
+}
 
+void _scenes({required bool recordGif}) {
   testWidgets('tutorial', (tester) async {
     await _pumpApp(tester, saved: _midGame(), tutorialSeen: false);
     await tester.pump(const Duration(milliseconds: 950)); // piece mid-slide
     await _savePng(tester, 'tutorial');
   });
 
-  testWidgets('gameplay, drag preview, line clear + GIF', (tester) async {
+  testWidgets('gameplay, drag preview, line clear', (tester) async {
     final bloc = await _pumpApp(tester, saved: _midGame());
     expect(bloc.state.trayShapes, hasLength(3));
     await _savePng(tester, 'gameplay');
 
-    final gif = _GifRecorder(tester);
-    await gif.frame(centiseconds: 70);
+    final gif = recordGif ? _GifRecorder(tester) : null;
+    await gif?.frame(centiseconds: 70);
 
     final cell = tester.getRect(find.byKey(const ValueKey('cell-4-3')));
     final from = tester.getCenter(find.byKey(const ValueKey('combo')));
@@ -284,27 +315,27 @@ void main() {
       final t = Curves.easeInOut.transform(i / steps);
       await gesture.moveTo(Offset.lerp(from, to, t)!);
       await tester.pump(const Duration(milliseconds: 30));
-      await gif.frame(centiseconds: 3);
+      await gif?.frame(centiseconds: 3);
     }
-    await gif.frame(centiseconds: 80); // hold on the preview
+    await gif?.frame(centiseconds: 80); // hold on the preview
     await _savePng(tester, 'drag_preview');
 
     await gesture.up();
     await tester.pump();
     for (var ms = 0; ms < 1000; ms += 40) {
       await tester.pump(const Duration(milliseconds: 40));
-      await gif.frame();
+      await gif?.frame();
       if (ms == 120) await _savePng(tester, 'line_clear');
     }
     await tester.pumpAndSettle();
-    await gif.frame(centiseconds: 160);
+    await gif?.frame(centiseconds: 160);
 
     final result = bloc.state.lastMoveResult!;
     expect(result.clearedLinesCount, 2);
     expect(result.batterySurgeCount, 1);
     expect(result.multiplier, 2);
 
-    gif.save('gameplay');
+    gif?.save('gameplay');
   });
 
   testWidgets('game over', (tester) async {
