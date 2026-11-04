@@ -150,11 +150,12 @@ class GameOverDialog extends StatelessWidget {
                             backgroundColor: VoltColors.accent,
                             foregroundColor: VoltColors.background,
                             padding: const EdgeInsets.symmetric(vertical: 16),
-                            textStyle: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 2,
-                            ),
+                            textStyle: Theme.of(context).textTheme.labelLarge
+                                ?.copyWith(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 2,
+                                ),
                           ),
                           icon: const Icon(Icons.replay_rounded),
                           label: const Text('REPLAY'),

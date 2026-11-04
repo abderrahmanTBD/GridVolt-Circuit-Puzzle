@@ -155,10 +155,13 @@ class _TutorialOverlayState extends State<TutorialOverlay>
                               style: FilledButton.styleFrom(
                                 backgroundColor: VoltColors.accent,
                                 foregroundColor: VoltColors.background,
-                                textStyle: const TextStyle(
-                                  fontWeight: FontWeight.w900,
-                                  letterSpacing: 1.5,
-                                ),
+                                textStyle: Theme.of(context)
+                                    .textTheme
+                                    .labelLarge
+                                    ?.copyWith(
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: 1.5,
+                                    ),
                               ),
                               child: Text(isLast ? 'PLAY' : 'NEXT'),
                             ),
