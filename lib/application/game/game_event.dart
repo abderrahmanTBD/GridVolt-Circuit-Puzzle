@@ -12,6 +12,12 @@ final class StartNewGame extends GameEvent {
   const StartNewGame();
 }
 
+/// Sent on app launch: continues a restored run if there is one, otherwise
+/// starts a new game.
+final class ResumeOrStartGame extends GameEvent {
+  const ResumeOrStartGame();
+}
+
 /// Attempts to drop [shape] (which must be in the tray) at the given origin.
 final class PlaceShape extends GameEvent {
   const PlaceShape(this.shape, this.originRow, this.originCol);

@@ -8,6 +8,8 @@ import 'package:grid_volt/domain/models/models.dart';
 import '../helpers.dart';
 
 void main() {
+  _fairDealingTests();
+
   group('canPlaceShape', () {
     test('rejects out of bounds and overlaps', () {
       final g = almostFullRow0();
@@ -106,4 +108,70 @@ void main() {
       expect(a.map((s) => s.id).toSet().length, 3);
     },
   );
+}
+
+/// Board with only isolated single-cell holes: nothing but a dot fits.
+List<List<GridCell>> _checkerHoles() {
+  final g = mutableGrid();
+  for (var r = 0; r < 8; r++) {
+    for (var c = 0; c < 8; c++) {
+      g[r][c] = (r.isEven && c.isEven) ? GridCell.empty : filled;
+    }
+  }
+  return g;
+}
+
+int _filled(List<List<GridCell>> g) =>
+    g.fold(0, (n, row) => n + row.where((c) => c.isFilled).length);
+
+void _fairDealingTests() {
+  group('fair dealing', () {
+    test('always deals at least one piece that fits', () {
+      final grid = _checkerHoles();
+      for (var seed = 0; seed < 200; seed++) {
+        final tray = ShapeGenerator(random: Random(seed)).nextTray(grid: grid);
+        expect(tray, hasLength(3));
+        expect(
+          GridVoltEngine.hasValidMoves(grid, tray),
+          isTrue,
+          reason: 'seed $seed dealt an unplayable tray',
+        );
+      }
+    });
+
+    test('a fuller board deals smaller pieces on average', () {
+      double avgSize(List<List<GridCell>> grid) {
+        final gen = ShapeGenerator(random: Random(3));
+        var cells = 0, n = 0;
+        for (var i = 0; i < 400; i++) {
+          for (final s in gen.nextTray(grid: grid)) {
+            cells += s.cells.length;
+            n++;
+          }
+        }
+        return cells / n;
+      }
+
+      final crowded = mutableGrid();
+      for (var r = 0; r < 6; r++) {
+        for (var c = 0; c < 7; c++) {
+          crowded[r][c] = filled; // ~66% full, no complete lines
+        }
+      }
+      expect(_filled(crowded), 42);
+
+      final emptyAvg = avgSize(GridVoltEngine.emptyGrid());
+      final crowdedAvg = avgSize(crowded);
+      expect(crowdedAvg, lessThan(emptyAvg - 0.4));
+    });
+
+    test('ids from separate generators do not collide', () {
+      final a = ShapeGenerator(random: Random(1)).nextTray();
+      final b = ShapeGenerator(random: Random(2)).nextTray();
+      expect(
+        a.map((s) => s.id).toSet().intersection(b.map((s) => s.id).toSet()),
+        isEmpty,
+      );
+    });
+  });
 }

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:bloc_test/bloc_test.dart';
@@ -206,10 +207,60 @@ void main() {
       bloc.close();
     });
 
-    test('serialises only the high score', () {
+    test('a finished game stores only the high score', () {
+      final over = _seeded(score: 30, highScore: 77).copyWith(isGameOver: true);
+      expect(GameStateCodec.encode(over), {'v': 2, 'highScore': 77});
+    });
+
+    test('a run in progress round-trips through JSON', () {
+      final grid = almostFullRow0();
+      grid[5][5] = const GridCell(colorId: 2, special: SpecialTile.battery);
+      const special = PuzzleShape(
+        id: 'x',
+        cells: [CellOffset(0, 0), CellOffset(1, 0)],
+        colorId: 6,
+        special: SpecialTile.multiplier,
+        specialIndex: 1,
+      );
+      final original = _seeded(
+        grid: grid,
+        tray: const [dot, special],
+        score: 42,
+        highScore: 90,
+      );
+
+      // Through a real JSON string, as hydrated_bloc stores it.
+      final json =
+          jsonDecode(jsonEncode(GameStateCodec.encode(original)))
+              as Map<String, dynamic>;
+      final restored = GameStateCodec.decode(json);
+
+      expect(restored, original);
+    });
+
+    test('restores a saved run on startup', () {
+      final saved = _seeded(score: 12, highScore: 50, tray: const [h2]);
+      when(() => storage.read(any())).thenReturn(GameStateCodec.encode(saved));
       final bloc = buildBloc();
-      expect(bloc.toJson(_seeded(score: 30, highScore: 77)), {'highScore': 77});
+      expect(bloc.state.currentScore, 12);
+      expect(bloc.state.trayShapes, [h2]);
       bloc.close();
+    });
+
+    test('corrupt save data falls back to a new game keeping the best', () {
+      final restored = GameStateCodec.decode({
+        'v': 2,
+        'highScore': 300,
+        'run': {'score': 'oops', 'grid': [], 'tray': 7},
+      });
+      expect(restored, GameState.initial(highScore: 300));
+    });
+
+    test('reads the old high-score-only format', () {
+      expect(
+        GameStateCodec.decode({'highScore': 55}),
+        GameState.initial(highScore: 55),
+      );
     });
 
     blocTest<GameBloc, GameState>(
@@ -217,8 +268,40 @@ void main() {
       build: buildBloc,
       seed: () => _seeded(highScore: 2),
       act: (bloc) => bloc.add(const PlaceShape(square, 0, 0)),
-      verify: (_) =>
-          verify(() => storage.write(any(), {'highScore': 4})).called(1),
+      verify: (_) => verify(
+        () => storage.write(any(), any(that: containsPair('highScore', 4))),
+      ).called(1),
+    );
+  });
+
+  group('ResumeOrStartGame', () {
+    blocTest<GameBloc, GameState>(
+      'keeps a restored run untouched',
+      build: buildBloc,
+      seed: () => _seeded(grid: almostFullRow0(), score: 8),
+      act: (bloc) => bloc.add(const ResumeOrStartGame()),
+      expect: () => <GameState>[],
+    );
+
+    blocTest<GameBloc, GameState>(
+      'starts a new game when there is nothing to resume',
+      build: buildBloc,
+      act: (bloc) => bloc.add(const ResumeOrStartGame()),
+      expect: () => [
+        isA<GameState>().having((s) => s.trayShapes.length, 'tray', 3),
+      ],
+    );
+
+    blocTest<GameBloc, GameState>(
+      'deals a tray for a run saved between placing and dealing',
+      build: buildBloc,
+      seed: () => _seeded(grid: almostFullRow0(), score: 8, tray: const []),
+      act: (bloc) => bloc.add(const ResumeOrStartGame()),
+      expect: () => [
+        isA<GameState>()
+            .having((s) => s.trayShapes.length, 'tray', 3)
+            .having((s) => s.currentScore, 'score', 8),
+      ],
     );
   });
 }

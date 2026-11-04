@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -5,13 +6,17 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../application/game/game_bloc.dart';
+import '../../application/onboarding/onboarding_cubit.dart';
 import '../../application/settings/audio_settings_cubit.dart';
+import '../../domain/models/models.dart';
 import '../effects/sound_effects.dart';
 import '../widgets/game_board.dart';
 import '../widgets/game_hud.dart';
 import '../widgets/game_over_dialog.dart';
 import '../widgets/placement_preview.dart';
 import '../widgets/shape_tray.dart';
+import '../widgets/special_tile_hint.dart';
+import '../widgets/tutorial_overlay.dart';
 
 class GameScreen extends StatefulWidget {
   const GameScreen({super.key});
@@ -25,11 +30,54 @@ class GameScreen extends StatefulWidget {
 
 class _GameScreenState extends State<GameScreen> {
   final PlacementPreviewController _preview = PlacementPreviewController(null);
+  late bool _showTutorial;
+  SpecialTile? _hint;
+  Timer? _hintTimer;
+
+  static const _hintDuration = Duration(seconds: 7);
+
+  @override
+  void initState() {
+    super.initState();
+    _showTutorial = !context.read<OnboardingCubit>().state.tutorialSeen;
+    // A restored run may already hold a special tile the player never saw.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _maybeShowHint(context.read<GameBloc>().state.trayShapes);
+    });
+  }
 
   @override
   void dispose() {
+    _hintTimer?.cancel();
     _preview.dispose();
     super.dispose();
+  }
+
+  void _closeTutorial({required bool finished}) {
+    context.read<OnboardingCubit>().completeTutorial(finished: finished);
+    setState(() => _showTutorial = false);
+    _maybeShowHint(context.read<GameBloc>().state.trayShapes);
+  }
+
+  /// Shows the first-time explanation for a newly dealt special tile.
+  void _maybeShowHint(List<PuzzleShape> tray) {
+    if (_showTutorial || _hint != null) return;
+    final onboarding = context.read<OnboardingCubit>();
+    for (final shape in tray) {
+      final tile = shape.special;
+      if (tile != SpecialTile.none && !onboarding.state.hasSeenHint(tile)) {
+        onboarding.markHintSeen(tile);
+        setState(() => _hint = tile);
+        _hintTimer?.cancel();
+        _hintTimer = Timer(_hintDuration, _closeHint);
+        return;
+      }
+    }
+  }
+
+  void _closeHint() {
+    _hintTimer?.cancel();
+    if (mounted) setState(() => _hint = null);
   }
 
   void _play(Sfx sfx) {
@@ -81,24 +129,71 @@ class _GameScreenState extends State<GameScreen> {
           listenWhen: (p, c) => !p.isGameOver && c.isGameOver,
           listener: (_, _) => _onGameOver(),
         ),
+        BlocListener<GameBloc, GameState>(
+          listenWhen: (p, c) => p.trayShapes != c.trayShapes,
+          listener: (_, s) => _maybeShowHint(s.trayShapes),
+        ),
       ],
       child: Scaffold(
-        body: Container(
-          decoration: const BoxDecoration(
-            gradient: RadialGradient(
-              center: Alignment(0, -0.3),
-              radius: 1.2,
-              colors: [Color(0xFF0D1830), Color(0xFF060A12)],
-            ),
-          ),
-          child: SafeArea(
-            child: LayoutBuilder(
-              builder: (context, constraints) => _ResponsiveLayout(
-                constraints: constraints,
-                preview: _preview,
+        body: Stack(
+          children: [
+            Positioned.fill(
+              child: Container(
+                decoration: const BoxDecoration(
+                  gradient: RadialGradient(
+                    center: Alignment(0, -0.3),
+                    radius: 1.2,
+                    colors: [Color(0xFF0D1830), Color(0xFF060A12)],
+                  ),
+                ),
+                child: SafeArea(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) => _ResponsiveLayout(
+                      constraints: constraints,
+                      preview: _preview,
+                      onHelp: () => setState(() => _showTutorial = true),
+                    ),
+                  ),
+                ),
               ),
             ),
-          ),
+            Positioned(
+              left: 0,
+              right: 0,
+              top: 0,
+              child: SafeArea(
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 520),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 250),
+                        transitionBuilder: (child, a) => FadeTransition(
+                          opacity: a,
+                          child: SlideTransition(
+                            position: Tween(
+                              begin: const Offset(0, -0.4),
+                              end: Offset.zero,
+                            ).animate(a),
+                            child: child,
+                          ),
+                        ),
+                        child: _hint == null
+                            ? const SizedBox.shrink()
+                            : SpecialTileHint(
+                                tile: _hint!,
+                                onClose: _closeHint,
+                              ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            if (_showTutorial)
+              Positioned.fill(child: TutorialOverlay(onDone: _closeTutorial)),
+          ],
         ),
       ),
     );
@@ -109,10 +204,15 @@ class _GameScreenState extends State<GameScreen> {
 /// them vertically; wide screens put the board left and HUD + tray right.
 /// Every dimension is derived from the constraints, so nothing can overflow.
 class _ResponsiveLayout extends StatelessWidget {
-  const _ResponsiveLayout({required this.constraints, required this.preview});
+  const _ResponsiveLayout({
+    required this.constraints,
+    required this.preview,
+    required this.onHelp,
+  });
 
   final BoxConstraints constraints;
   final PlacementPreviewController preview;
+  final VoidCallback onHelp;
 
   static const gutter = 16.0;
   static const gap = 12.0;
@@ -132,17 +232,19 @@ class _ResponsiveLayout extends StatelessWidget {
         h - hud - tray - 3 * gap,
       ).clamp(0.0, maxBoard);
       final sideWidth = min(w - 2 * gutter, max(board, 560.0));
-      return Center(
+      // Spread spare height evenly so tall phones don't bunch everything in
+      // the middle. 3 * gap was reserved above, so spacing never collapses.
+      return SizedBox(
+        width: w,
+        height: h,
         child: Column(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
             SizedBox(
               width: sideWidth,
-              child: GameHud(height: hud),
+              child: GameHud(height: hud, onHelp: onHelp),
             ),
-            const SizedBox(height: gap),
             GameBoard(size: board, preview: preview),
-            const SizedBox(height: gap),
             ShapeTray(
               width: sideWidth,
               height: tray,
@@ -168,7 +270,7 @@ class _ResponsiveLayout extends StatelessWidget {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                GameHud(height: hud),
+                GameHud(height: hud, onHelp: onHelp),
                 const SizedBox(height: gap),
                 ShapeTray(
                   width: panel,

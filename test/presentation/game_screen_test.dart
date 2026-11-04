@@ -10,6 +10,7 @@ import 'package:grid_volt/presentation/effects/sound_effects.dart';
 import 'package:grid_volt/presentation/painters/placement_preview_painter.dart';
 import 'package:grid_volt/presentation/screens/game_screen.dart';
 import 'package:grid_volt/presentation/widgets/shape_tray.dart';
+import 'package:grid_volt/presentation/widgets/special_tile_hint.dart';
 import 'package:mocktail/mocktail.dart';
 
 import '../helpers.dart';
@@ -161,6 +162,93 @@ void main() {
 
       expect(bloc.state.trayShapes.length, 2);
       expect(sfx.played, isEmpty);
+    });
+  });
+
+  group('onboarding', () {
+    Finder tutorial() => find.byKey(const Key('tutorial-overlay'));
+
+    testWidgets('first launch shows the tutorial; finishing it remembers', (
+      tester,
+    ) async {
+      final storage = installMockStorage(tutorialSeen: false);
+      _setScreen(tester, const Size(390, 844));
+      await tester.pumpWidget(
+        GridVoltApp(
+          soundEffects: const SilentSoundEffects(),
+          gameBloc: _seededBloc(),
+        ),
+      );
+      await tester.pump();
+      expect(tutorial(), findsOneWidget);
+      expect(find.text('Power the grid'), findsOneWidget);
+
+      for (final label in ['NEXT', 'NEXT']) {
+        await tester.tap(find.text(label));
+        await tester.pump(const Duration(milliseconds: 300));
+      }
+      expect(find.text('Special tiles'), findsOneWidget);
+      expect(find.text('Skip'), findsNothing, reason: 'no Skip on last step');
+
+      await tester.tap(find.text('PLAY'));
+      await tester.pumpAndSettle();
+      expect(tutorial(), findsNothing);
+      verify(
+        () => storage.write(
+          'OnboardingCubit',
+          any(that: containsPair('tutorialSeen', true)),
+        ),
+      ).called(1);
+    });
+
+    testWidgets('skipping still explains a special tile once it is dealt', (
+      tester,
+    ) async {
+      installMockStorage(tutorialSeen: false);
+      _setScreen(tester, const Size(390, 844));
+      final bloc = GameBloc(
+        shapeGenerator: ShapeGenerator(random: Random(5), specialChance: 1),
+      )..add(const StartNewGame());
+      await tester.pumpWidget(
+        GridVoltApp(soundEffects: const SilentSoundEffects(), gameBloc: bloc),
+      );
+      await tester.pump();
+      expect(
+        find.byType(SpecialTileHint),
+        findsNothing,
+        reason: 'never on top of the tutorial',
+      );
+
+      await tester.tap(find.text('Skip'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(tutorial(), findsNothing);
+      expect(find.byType(SpecialTileHint), findsOneWidget);
+
+      // Auto-dismisses.
+      await tester.pump(const Duration(seconds: 8));
+      await tester.pumpAndSettle();
+      expect(find.byType(SpecialTileHint), findsNothing);
+    });
+
+    testWidgets('help button reopens the tutorial', (tester) async {
+      _setScreen(tester, const Size(390, 844));
+      await tester.pumpWidget(
+        GridVoltApp(
+          soundEffects: const SilentSoundEffects(),
+          gameBloc: _seededBloc(),
+        ),
+      );
+      await tester.pump();
+      expect(tutorial(), findsNothing);
+
+      await tester.tap(find.byTooltip('How to play'));
+      await tester.pump();
+      expect(tutorial(), findsOneWidget);
+
+      await tester.tap(find.text('Skip'));
+      await tester.pumpAndSettle();
+      expect(tutorial(), findsNothing);
     });
   });
 

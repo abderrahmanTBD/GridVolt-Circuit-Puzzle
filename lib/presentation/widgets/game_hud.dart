@@ -8,9 +8,12 @@ import '../theme/volt_theme.dart';
 /// Top bar: score, high score, logo and mute toggle. Everything sits in
 /// FittedBoxes so it shrinks instead of overflowing on short screens.
 class GameHud extends StatelessWidget {
-  const GameHud({super.key, required this.height});
+  const GameHud({super.key, required this.height, this.onHelp});
 
   final double height;
+
+  /// Opens the how-to-play overlay; the button is hidden when null.
+  final VoidCallback? onHelp;
 
   @override
   Widget build(BuildContext context) {
@@ -43,7 +46,22 @@ class GameHud extends StatelessWidget {
                 alignEnd: true,
               ),
             ),
-            const _MuteButton(),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const _MuteButton(),
+                if (onHelp != null)
+                  IconButton(
+                    tooltip: 'How to play',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: onHelp,
+                    icon: const Icon(
+                      Icons.help_outline_rounded,
+                      color: VoltColors.textMuted,
+                    ),
+                  ),
+              ],
+            ),
           ],
         ),
       ),

@@ -5,10 +5,16 @@ import 'package:mocktail/mocktail.dart';
 
 class MockStorage extends Mock implements Storage {}
 
-/// Installs an in-memory-ish mocked HydratedBloc storage.
-MockStorage installMockStorage() {
+/// Installs a mocked HydratedBloc storage. Unless [tutorialSeen] is false,
+/// the first-run tutorial is marked as seen so it doesn't cover the board.
+MockStorage installMockStorage({bool tutorialSeen = true}) {
   final storage = MockStorage();
   when(() => storage.read(any())).thenReturn(null);
+  if (tutorialSeen) {
+    when(
+      () => storage.read('OnboardingCubit'),
+    ).thenReturn({'tutorialSeen': true, 'hintsSeen': <String>[]});
+  }
   when(() => storage.write(any(), any<dynamic>())).thenAnswer((_) async {});
   when(() => storage.delete(any())).thenAnswer((_) async {});
   when(() => storage.clear()).thenAnswer((_) async {});

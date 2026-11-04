@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import 'application/game/game_bloc.dart';
+import 'application/onboarding/onboarding_cubit.dart';
 import 'application/settings/audio_settings_cubit.dart';
 import 'presentation/effects/sound_effects.dart';
 import 'presentation/screens/game_screen.dart';
@@ -12,7 +13,7 @@ class GridVoltApp extends StatelessWidget {
 
   final SoundEffects soundEffects;
 
-  /// Optional pre-built bloc (tests); otherwise a new game is started.
+  /// Optional pre-built bloc (tests); otherwise the saved run is resumed.
   final GameBloc? gameBloc;
 
   @override
@@ -25,9 +26,10 @@ class GridVoltApp extends StatelessWidget {
             BlocProvider<GameBloc>.value(value: bloc)
           else
             BlocProvider<GameBloc>(
-              create: (_) => GameBloc()..add(const StartNewGame()),
+              create: (_) => GameBloc()..add(const ResumeOrStartGame()),
             ),
           BlocProvider(create: (_) => AudioSettingsCubit()),
+          BlocProvider(create: (_) => OnboardingCubit()),
         ],
         child: MaterialApp(
           title: 'GridVolt: Circuit Puzzle',

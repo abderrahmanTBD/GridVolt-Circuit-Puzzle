@@ -9,28 +9,41 @@ import '../../domain/models/models.dart';
 
 part 'game_event.dart';
 part 'game_state.dart';
+part 'game_state_codec.dart';
 
-/// Game state machine. Only [GameState.highScore] is persisted (via
-/// hydrated_bloc), so it survives app restarts while a run in progress does not.
+/// Game state machine, persisted with hydrated_bloc: the high score always,
+/// plus the board, tray and score while a run is in progress (see
+/// [GameStateCodec]).
 class GameBloc extends HydratedBloc<GameEvent, GameState> {
   GameBloc({ShapeGenerator? shapeGenerator})
     : _generator = shapeGenerator ?? ShapeGenerator(),
       super(GameState.initial()) {
     on<StartNewGame>(_onStartNewGame);
+    on<ResumeOrStartGame>(_onResumeOrStartGame);
     on<PlaceShape>(_onPlaceShape);
     on<ReplenishTrayIfNeeded>(_onReplenishTrayIfNeeded);
   }
 
   final ShapeGenerator _generator;
 
-  static const _highScoreKey = 'highScore';
-
   void _onStartNewGame(StartNewGame event, Emitter<GameState> emit) {
+    final grid = GridVoltEngine.emptyGrid();
     emit(
-      GameState.initial(
-        highScore: state.highScore,
-      ).copyWith(trayShapes: _generator.nextTray()),
+      GameState.initial(highScore: state.highScore).copyWith(
+        gridMatrix: grid,
+        trayShapes: _generator.nextTray(grid: grid),
+      ),
     );
+  }
+
+  void _onResumeOrStartGame(ResumeOrStartGame event, Emitter<GameState> emit) {
+    final hasRun = state.trayShapes.isNotEmpty || state.currentScore > 0;
+    if (state.isGameOver || !hasRun) {
+      _onStartNewGame(const StartNewGame(), emit);
+    } else if (state.trayShapes.isEmpty) {
+      _onReplenishTrayIfNeeded(const ReplenishTrayIfNeeded(), emit);
+    }
+    // Otherwise the restored run continues as-is.
   }
 
   void _onPlaceShape(PlaceShape event, Emitter<GameState> emit) {
@@ -88,7 +101,7 @@ class GameBloc extends HydratedBloc<GameEvent, GameState> {
   ) {
     if (state.trayShapes.isNotEmpty || state.isGameOver) return;
 
-    final tray = _generator.nextTray();
+    final tray = _generator.nextTray(grid: state.gridMatrix);
     emit(
       state.copyWith(
         trayShapes: tray,
@@ -98,13 +111,8 @@ class GameBloc extends HydratedBloc<GameEvent, GameState> {
   }
 
   @override
-  GameState? fromJson(Map<String, dynamic> json) {
-    final stored = json[_highScoreKey];
-    return GameState.initial(highScore: stored is int ? stored : 0);
-  }
+  GameState? fromJson(Map<String, dynamic> json) => GameStateCodec.decode(json);
 
   @override
-  Map<String, dynamic>? toJson(GameState state) => {
-    _highScoreKey: state.highScore,
-  };
+  Map<String, dynamic>? toJson(GameState state) => GameStateCodec.encode(state);
 }
